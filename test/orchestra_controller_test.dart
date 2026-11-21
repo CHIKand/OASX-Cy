@@ -149,6 +149,53 @@ void main() {
     expect(_tasks(c.editor.rows), ['RealmRaid']);
   });
 
+  test('test_read_failing_follows_latest_read', () async {
+    final pending = <Completer<OrchestraBundle?>>[];
+    final c = OrchestraController('oas1', getOrchestra: (_) {
+      final reply = Completer<OrchestraBundle?>();
+      pending.add(reply);
+      return reply.future;
+    });
+    expect(c.readFailing.value, isFalse);
+
+    // 打开页面时 OAS 还没起来：读取失败，也还没有数据
+    var read = c.refreshProgress();
+    pending.last.completeError(Exception('connection refused'));
+    await read;
+    expect(c.readFailing.value, isTrue);
+    expect(c.bundle.value, isNull);
+
+    // 读到数据：清除
+    read = c.refreshProgress();
+    pending.last.complete(_server(['Orochi']));
+    await read;
+    expect(c.readFailing.value, isFalse);
+
+    // 运行中 OAS 不再应答：保留上一次的数据，标为读取失败
+    read = c.refreshProgress();
+    pending.last.completeError(Exception('503'));
+    await read;
+    expect(c.readFailing.value, isTrue);
+    expect(_tasks(c.bundle.value!.settings.rows), ['Orochi']);
+
+    // 404 也算读到了结果：清除，改为后端缺接口
+    read = c.refreshProgress();
+    pending.last.complete(null);
+    await read;
+    expect(c.readFailing.value, isFalse);
+    expect(c.backendMissing.value, isTrue);
+
+    // 先发出的读取在后发出的读取被采用之后才失败：不把新数据标成过时
+    final older = c.refreshProgress();
+    final newer = c.refreshProgress();
+    pending.last.complete(_server(['RealmRaid']));
+    await newer;
+    pending[pending.length - 2].completeError(Exception('timeout'));
+    await older;
+    expect(c.readFailing.value, isFalse);
+    expect(_tasks(c.bundle.value!.settings.rows), ['RealmRaid']);
+  });
+
   test('test_save_blocks_local_errors_and_maps_server_errors', () async {
     var server = _server(['Orochi']);
     final sent = <List<String>>[];

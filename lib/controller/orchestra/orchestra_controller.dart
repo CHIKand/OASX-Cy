@@ -54,6 +54,10 @@ class OrchestraController extends GetxController {
   /// 后端没有编排接口（GET 返回 404）。
   final backendMissing = false.obs;
 
+  /// 最近一次读取失败（404 以外：连不上、503 等），bundle 是旧数据或仍为 null。
+  /// 读到结果（含 404）即清除。只记状态，不弹提示。
+  final readFailing = false.obs;
+
   Timer? _timer;
   int _requested = 0; // 已发出的读取次数，即最近一次读取的序号
   int _acceptFrom = 1; // 序号小于它的读取结果不再采用
@@ -78,18 +82,23 @@ class OrchestraController extends GetxController {
   }
 
   /// 读一次服务端数据。bundle 总是换成读到的；没有未保存的修改时，草稿也按它重建。
-  /// 404 置 backendMissing；其他失败静默跳过，保留上一次的数据，下一轮再读。
+  /// 404 置 backendMissing；其他失败保留上一次的数据，置 readFailing，下一轮再读。
   Future<void> refreshProgress() async {
     final seq = ++_requested;
     final OrchestraBundle? fresh;
     try {
       fresh = await _getOrchestra(script);
-    } catch (_) {
+    } catch (e) {
+      // 不弹提示，免得每 2 秒弹一次；只记状态和调试日志。
+      // 失败与结果按同一序号规则取舍：序号已作废的失败不算，旧的失败不把新数据标成过时
+      printError(info: '[$script] 编排读取失败：$e');
+      if (!isClosed && seq >= _acceptFrom) readFailing.value = true;
       return;
     }
     // 结果回来的先后不一定同发出的先后：比已采用的更早发出的作废，旧数据不盖新数据
     if (isClosed || seq < _acceptFrom) return;
     _acceptFrom = seq + 1;
+    readFailing.value = false;
     if (fresh == null) {
       backendMissing.value = true;
       return;
