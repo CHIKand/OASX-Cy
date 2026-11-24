@@ -5,10 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
 import 'package:oasx/controller/orchestra/orchestra_controller.dart';
 import 'package:oasx/model/orchestra_model.dart';
+import 'package:oasx/model/script_model.dart';
+import 'package:oasx/service/script_service.dart';
 import 'package:oasx/views/home/assets_check_entry.dart';
 import 'package:oasx/views/orchestra/orchestra_view.dart';
 
-// 编排页的页面测试：控制器注入假的接口函数，不连网。
+// 编排页的页面测试：控制器注入假的接口函数，不连网；实例进程的状态也可换成假的。
 // 假目录：
 // - 八岐大蛇：一个子项（十层、悲鸣），次数不设上限，有时长；
 // - 个人突破：次数 1–30，没有子项和时长；
@@ -71,18 +73,22 @@ OrchestraBundle _bundle(
       'catalog': _catalog,
     });
 
-Widget _app(String? script) => MaterialApp(
+Widget _app(String? script, {InstanceStateFn? instance}) => MaterialApp(
       home: Scaffold(
-        body: script == null ? const SizedBox() : OrchestraView(script: script),
+        body: script == null
+            ? const SizedBox()
+            : OrchestraView(script: script, instanceState: instance),
       ),
     );
 
 /// 登记用假接口的控制器，显示 oas1 的编排页，并画出第一次读取的结果。
+/// 不给 instance 时，实例状态照常取 ScriptService（测试里没有登记，即不知道）。
 Future<OrchestraController> _show(
   WidgetTester tester,
   GetOrchestraFn get, {
   PutOrchestraFn? put,
   OrchestraCommandFn? command,
+  InstanceStateFn? instance,
 }) async {
   // 画布放大到整页可见，点按钮不必先滚动
   tester.view.physicalSize = const Size(1600, 2400);
@@ -97,7 +103,7 @@ Future<OrchestraController> _show(
     ),
     tag: 'oas1',
   );
-  await tester.pumpWidget(_app('oas1'));
+  await tester.pumpWidget(_app('oas1', instance: instance));
   await _frames(tester);
   return c;
 }
@@ -112,6 +118,24 @@ Future<void> _frames(WidgetTester tester) async {
 Future<void> _nextPoll(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 2));
   await tester.pump();
+}
+
+/// 只有 findScriptModel 的 ScriptService：真的那个构造和初始化时要连 OAS、读本地存储。
+class _FakeScriptService extends GetxService implements ScriptService {
+  final models = <String, ScriptModel>{};
+
+  // ScriptService 的生命周期方法返回 Future，签名要与它一致
+  @override
+  Future<void> onInit() async => super.onInit();
+
+  @override
+  Future<void> onClose() async => super.onClose();
+
+  @override
+  ScriptModel? findScriptModel(String name) => models[name];
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 Finder _field(String key) => find.descendant(
@@ -467,6 +491,175 @@ void main() {
     await _nextPoll(tester);
     expect(find.text('当前：第 2 行 个人突破   已打 12 次 / 20   已用 6:10 / —'),
         findsOneWidget);
+  });
+
+  testWidgets('test_view_instance_stopped_marks_status_and_panel',
+      (tester) async {
+    // 实例在总览里停了（或出错退出），进度还停在它停下时：
+    // 状态行说明实例未运行，运行面板像数据过时那样标出来
+    final instance = Rx<ScriptState?>(ScriptState.inactive);
+    final rows = [
+      {'task': 'Orochi', 'max_count': 30},
+      {'task': 'RealmRaid'},
+    ];
+    var server = _bundle(
+      rows,
+      settings: {'state': 'running'},
+      progress: {'phase': 'row_running', 'row_index': 0, 'done_count': 12},
+    );
+    await _show(tester, (_) async => server, instance: (_) => instance.value);
+    const qualifier = ' · 实例未运行，启动实例后继续';
+    final mark = find.text('实例未运行，进度停在实例停止时');
+    expect(find.text('状态：运行中（第 1 行）$qualifier'), findsOneWidget);
+    expect(mark, findsOneWidget);
+    expect(tester.widget<Text>(mark).style?.color,
+        Theme.of(tester.element(mark)).colorScheme.error);
+    // 哪些按钮能点不因此改变
+    VoidCallback? pressed(String label) => tester
+        .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, label))
+        .onPressed;
+    expect(pressed('开始'), isNull);
+    expect(pressed('暂停'), isNotNull);
+    expect(pressed('停止'), isNotNull);
+
+    // 实例在跑，或还不知道（刚连上为 updating，总览里没有这个实例为 null）：不加
+    for (final state in [ScriptState.running, ScriptState.updating, null]) {
+      instance.value = state;
+      await tester.pump();
+      expect(find.text('状态：运行中（第 1 行）'), findsOneWidget, reason: '$state');
+      expect(mark, findsNothing, reason: '$state');
+    }
+
+    // 出错退出同样算没在跑；序列的其余几个阶段、暂停时也加
+    instance.value = ScriptState.warning;
+    for (final (state, phase, text) in [
+      ('running', 'ready', '运行中（等待第 2 行）'),
+      ('running', 'resting', '运行中（休息）'),
+      ('running', 'interrupted', '运行中（第 2 行中断）'),
+      ('paused', 'resting', '已暂停'),
+    ]) {
+      server = _bundle(rows,
+          settings: {'state': state},
+          progress: {'phase': phase, 'row_index': 1});
+      await _nextPoll(tester);
+      expect(find.text('状态：$text$qualifier'), findsOneWidget, reason: phase);
+      expect(mark, findsOneWidget, reason: phase);
+    }
+
+    // 序列已停止或已跑完，启动实例也不会接着跑：不加
+    for (final (state, phase, text) in [
+      ('idle', 'interrupted', '未运行'),
+      ('running', 'done', '已跑完'),
+    ]) {
+      server = _bundle(rows,
+          settings: {'state': state},
+          progress: {'phase': phase, 'row_index': 1});
+      await _nextPoll(tester);
+      expect(find.text('状态：$text'), findsOneWidget, reason: phase);
+      expect(mark, findsNothing, reason: phase);
+    }
+  });
+
+  testWidgets('test_view_reads_instance_state_from_script_service',
+      (tester) async {
+    // 不注入时取总览用的 ScriptService；实例启停随 websocket 推送，页面不等下一次轮询就刷新
+    final model = ScriptModel('oas1')..state.value = ScriptState.inactive;
+    Get.put<ScriptService>(_FakeScriptService()..models['oas1'] = model);
+    await _show(
+      tester,
+      (_) async => _bundle(
+        [
+          {'task': 'Orochi'}
+        ],
+        settings: {'state': 'running'},
+        progress: {
+          'phase': 'resting',
+          'row_index': 0,
+          'rest_remaining_seconds': 60,
+        },
+      ),
+    );
+    expect(find.text('状态：运行中（休息） · 实例未运行，启动实例后继续'), findsOneWidget);
+
+    model.state.value = ScriptState.running;
+    await tester.pump();
+    expect(find.text('状态：运行中（休息）'), findsOneWidget);
+  });
+
+  testWidgets('test_view_stop_or_pause_mid_row_waits_for_row_end',
+      (tester) async {
+    // 停止、暂停只改配置，实例下一次选任务时才照办：正在跑的这一行先打完
+    final instance = Rx<ScriptState?>(ScriptState.running);
+    final rows = [
+      {'task': 'Orochi'},
+      {'task': 'RealmRaid'},
+    ];
+    var server = _bundle(rows,
+        settings: {'state': 'idle'},
+        progress: {'phase': 'row_running', 'row_index': 0});
+    await _show(tester, (_) async => server, instance: (_) => instance.value);
+    expect(find.text('状态：停止中（本行打完后停止）'), findsOneWidget);
+    // 实例状态不知道时同样这样说：只有确知实例没在跑才不说
+    instance.value = null;
+    await tester.pump();
+    expect(find.text('状态：停止中（本行打完后停止）'), findsOneWidget);
+
+    instance.value = ScriptState.running;
+    server = _bundle(rows,
+        settings: {'state': 'paused'},
+        progress: {'phase': 'row_running', 'row_index': 0});
+    await _nextPoll(tester);
+    expect(find.text('状态：暂停中（本行打完后暂停）'), findsOneWidget);
+
+    // 停止会丢掉续跑：中断的那一行不再补完或重跑，提示不再这样说
+    server = _bundle(rows,
+        settings: {'state': 'idle'},
+        progress: {'phase': 'interrupted', 'row_index': 1});
+    await _nextPoll(tester);
+    expect(find.text('状态：未运行'), findsOneWidget);
+    expect(find.text('提示：第 2 行中断'), findsOneWidget);
+  });
+
+  testWidgets('test_view_instance_stopped_beats_row_finishes_first',
+      (tester) async {
+    // 实例没在跑，这一行不会接着打：不说本行打完后，只给序列状态加实例未运行的说明
+    final rows = [
+      {'task': 'Orochi'},
+    ];
+    var server = _bundle(rows,
+        settings: {'state': 'paused'},
+        progress: {'phase': 'row_running', 'row_index': 0});
+    await _show(tester, (_) async => server,
+        instance: (_) => ScriptState.inactive);
+    expect(find.text('状态：已暂停 · 实例未运行，启动实例后继续'), findsOneWidget);
+    expect(find.textContaining('本行打完后'), findsNothing);
+
+    // 已停止的序列，实例启动后也不会接着跑：只说未运行
+    server = _bundle(rows,
+        settings: {'state': 'idle'},
+        progress: {'phase': 'row_running', 'row_index': 0});
+    await _nextPoll(tester);
+    expect(find.text('状态：未运行'), findsOneWidget);
+    expect(find.textContaining('本行打完后'), findsNothing);
+  });
+
+  testWidgets('test_view_long_status_wraps_in_narrow_window', (tester) async {
+    await _show(
+      tester,
+      (_) async => _bundle(
+        [
+          {'task': 'Orochi'}
+        ],
+        settings: {'state': 'running'},
+        progress: {'phase': 'ready', 'row_index': 0},
+      ),
+      instance: (_) => ScriptState.inactive,
+    );
+    // 状态行加了实例未运行的说明，窄窗口里一行放不下：换行显示，不溢出
+    tester.view.physicalSize = const Size(480, 2400);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.text('状态：运行中（等待第 1 行） · 实例未运行，启动实例后继续'), findsOneWidget);
   });
 
   testWidgets('test_view_row_buttons', (tester) async {

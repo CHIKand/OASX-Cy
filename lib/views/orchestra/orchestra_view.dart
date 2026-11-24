@@ -5,6 +5,7 @@
 // - 没有未保存的修改时，editor、draft 随每次轮询整个换掉，所以构建和回调都从控制器现取，不留引用。
 // - 改完草稿调 edited()，它每次都换一份新的 errors。dirty 只在第一次编辑时通知，
 //   所以页面靠 bundle（每次轮询换新）和 errors 重建。
+// - 实例进程在不在运行另取自总览用的 ScriptService：进度只由实例写，实例停了进度就停住。
 
 import 'dart:math' as math;
 
@@ -15,6 +16,11 @@ import 'package:styled_widget/styled_widget.dart';
 
 import 'package:oasx/controller/orchestra/orchestra_controller.dart';
 import 'package:oasx/model/orchestra_model.dart';
+import 'package:oasx/model/script_model.dart';
+import 'package:oasx/service/script_service.dart';
+
+/// 取实例进程的状态（总览里的运行、停止），null 表示不知道。
+typedef InstanceStateFn = ScriptState? Function(String script);
 
 /// 留空的格子：子项、次数、分钟沿用任务自己的设置，休息取默认休息。
 const _defaultLabel = '(默认)';
@@ -44,20 +50,27 @@ const _settingLabels = {
 };
 
 class OrchestraView extends StatelessWidget {
-  const OrchestraView({super.key, required this.script});
+  const OrchestraView({super.key, required this.script, this.instanceState});
 
   final String script; // 实例名
 
+  /// 实例进程的状态，测试时换成假的；不给时取总览用的 ScriptService。
+  final InstanceStateFn? instanceState;
+
   // 内页以实例名作 key：换实例时旧页销毁、停止轮询，新页重新开始
   @override
-  Widget build(BuildContext context) =>
-      _OrchestraPage(key: ValueKey(script), script: script);
+  Widget build(BuildContext context) => _OrchestraPage(
+      key: ValueKey(script),
+      script: script,
+      instanceState: instanceState ?? _serviceInstanceState);
 }
 
 class _OrchestraPage extends StatefulWidget {
-  const _OrchestraPage({super.key, required this.script});
+  const _OrchestraPage(
+      {super.key, required this.script, required this.instanceState});
 
   final String script;
+  final InstanceStateFn instanceState;
 
   @override
   State<_OrchestraPage> createState() => _OrchestraPageState();
@@ -101,18 +114,27 @@ class _OrchestraPageState extends State<_OrchestraPage> {
       final readFailing = c.readFailing.value;
       final dirty = c.dirty.value;
       final errors = Map.of(c.errors);
+      // 实例确知没在运行：总览里停了，或出错退出（warning）；刚连上、还不知道（updating）的不算。
+      // 在 Obx 里读，实例启停时页面跟着刷新
+      final instance = widget.instanceState(widget.script);
+      final instanceStopped =
+          instance == ScriptState.inactive || instance == ScriptState.warning;
       final message =
           _blockingMessage(bundle, readFailing, c.backendMissing.value);
       final List<Widget> sections;
       if (message != null || bundle == null) {
-        sections = [_header(context, null), _note(context, message ?? '')];
+        sections = [
+          _header(context, null, instanceStopped),
+          _note(context, message ?? ''),
+        ];
       } else {
         sections = [
-          _header(context, bundle),
+          _header(context, bundle, instanceStopped),
           _tableCard(context, bundle, errors),
           _settingsCard(context, bundle, errors[-1] ?? const {}, dirty),
           _controlCard(context, bundle, dirty),
-          _panelCard(context, bundle, readFailing),
+          _panelCard(context, bundle, readFailing,
+              _frozenByInstance(bundle, instanceStopped)),
         ];
       }
       return SingleChildScrollView(
@@ -126,15 +148,20 @@ class _OrchestraPageState extends State<_OrchestraPage> {
 
   // ---------------------------------------------------------------- 页面各块
 
-  Widget _header(BuildContext context, OrchestraBundle? bundle) {
+  Widget _header(
+      BuildContext context, OrchestraBundle? bundle, bool instanceStopped) {
     final style = Theme.of(context).textTheme.titleMedium;
+    // 状态行带上实例未运行的说明后较长：同一行放不下就换到下一行，不溢出
     return <Widget>[
       Text('编排 · ${widget.script}',
-              style: style, overflow: TextOverflow.ellipsis)
-          .flexible(),
-      if (bundle != null) Text('状态：${_statusText(bundle)}', style: style),
+          style: style, overflow: TextOverflow.ellipsis),
+      if (bundle != null)
+        Text('状态：${_statusText(bundle, instanceStopped)}', style: style),
     ]
-        .toRow(mainAxisAlignment: MainAxisAlignment.spaceBetween)
+        .toWrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 16)
         .padding(horizontal: 4, vertical: 10);
   }
 
@@ -436,10 +463,12 @@ class _OrchestraPageState extends State<_OrchestraPage> {
         .card(margin: const EdgeInsets.only(bottom: 10));
   }
 
-  Widget _panelCard(BuildContext context, OrchestraBundle bundle, bool stale) {
+  Widget _panelCard(
+      BuildContext context, OrchestraBundle bundle, bool stale, bool frozen) {
     return <Widget>[
       Text('运行面板', style: Theme.of(context).textTheme.titleMedium),
       if (stale) _errorText(context, '数据可能已过时（连不上 OAS）'),
+      if (frozen) _errorText(context, '实例未运行，进度停在实例停止时'),
       Text('当前：${_currentText(bundle)}'),
       Text('下一行：${_nextText(bundle)}'),
       Text('全程：${_totalText(bundle)}'),
@@ -597,8 +626,24 @@ class _OrchestraPageState extends State<_OrchestraPage> {
     return _saved == true ? '已保存' : '';
   }
 
-  /// 状态行：配置里的运行状态，加上进度阶段。
-  String _statusText(OrchestraBundle b) {
+  /// 状态行。instanceStopped：实例确知没在运行，进度不会再动。
+  String _statusText(OrchestraBundle b, bool instanceStopped) {
+    final state = b.settings.state;
+    // 停止、暂停只写配置，实例下一次选任务时才照办：正在跑的这一行先打完。
+    // 实例没在运行时这一行不会接着打，不这样说
+    if (b.progress.phase == 'row_running' &&
+        state != 'running' &&
+        !instanceStopped) {
+      return state == 'paused' ? '暂停中（本行打完后暂停）' : '停止中（本行打完后停止）';
+    }
+    final text = _sequenceStateText(b);
+    return _frozenByInstance(b, instanceStopped)
+        ? '$text · 实例未运行，启动实例后继续'
+        : text;
+  }
+
+  /// 配置里的运行状态，加上进度阶段。
+  String _sequenceStateText(OrchestraBundle b) {
     final p = b.progress;
     final row = '第 ${p.rowIndex + 1} 行';
     switch (b.settings.state) {
@@ -719,8 +764,12 @@ class _OrchestraPageState extends State<_OrchestraPage> {
   /// 提示：按进度阶段生成，后端给了 status_note 就接在后面。
   String _hintText(OrchestraBundle b) {
     final p = b.progress;
+    final state = b.settings.state;
+    // 序列已停止：停止会丢掉续跑，不说中断的行怎么续
+    final idle = state != 'running' && state != 'paused';
     final base = switch (p.phase) {
       'resting' => '休息中，还剩 ${_mmss((p.restRemainingSeconds ?? 0).ceil())}',
+      'interrupted' when idle => '第 ${p.rowIndex + 1} 行中断',
       'interrupted' =>
         '第 ${p.rowIndex + 1} 行中断，将${b.settings.resumePolicy == 'rerun' ? '整行重跑' : '补完剩余'}',
       'done' => '已跑完',
@@ -731,6 +780,21 @@ class _OrchestraPageState extends State<_OrchestraPage> {
     return note.isEmpty ? base : '$base；$note';
   }
 }
+
+/// 序列在跑或暂停，实例却确知没在运行：进度只由实例写，停在它停下时，直到实例再启动。
+/// 这几个阶段等着实例接着跑；已跑完、没开始的不算。
+bool _frozenByInstance(OrchestraBundle b, bool instanceStopped) =>
+    instanceStopped &&
+    (b.settings.state == 'running' || b.settings.state == 'paused') &&
+    const {'row_running', 'ready', 'resting', 'interrupted'}
+        .contains(b.progress.phase);
+
+/// 实例进程的状态，与总览同源：ScriptService 随 websocket 推送更新，在 Obx 里读会跟着刷新。
+/// 服务还没登记（启动时异步登记）或其中没有这个实例时为 null。
+ScriptState? _serviceInstanceState(String script) =>
+    Get.isRegistered<ScriptService>()
+        ? Get.find<ScriptService>().findScriptModel(script)?.state.value
+        : null;
 
 /// 没有数据可编辑时显示的文字；返回 null 表示照常显示编排表。
 /// 读取失败比 404 新，两者都在时按读取失败处理；已有数据时读取失败只标过时，数据照常显示。
