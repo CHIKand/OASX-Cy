@@ -31,7 +31,7 @@ class TaskItemView extends StatelessWidget {
             borderRadius: BorderRadius.circular(10.0),
           ),
         ),
-        onPressed: () => Get.find<NavCtrl>().switchContent(model.taskName),
+        onPressed: () => Get.find<NavCtrl>().switchContent(model.taskName, force: true),
         child: Text(I18n.task_setting.tr,
             style: Theme.of(context).textTheme.bodySmall))
         .constrained(maxWidth: 100, maxHeight: 30);

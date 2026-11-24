@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:oasx/api/api_client.dart';
 import 'package:oasx/config/translation/i18n_content.dart';
+import 'package:oasx/views/home/assets_check_entry.dart';
 
 class ToolView extends StatelessWidget {
   const ToolView({Key? key}) : super(key: key);
@@ -20,6 +21,7 @@ class ToolView extends StatelessWidget {
         children: [
           NotifyTest(),
           DiagnosticExport(),
+          AssetsCheckEntry(),
         ],
       ),
     );

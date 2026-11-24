@@ -1,5 +1,7 @@
 part of nav;
 
+const kOrchestraMenu = '编排'; // 编排页的菜单键，同 OAS 下发的菜单
+
 class NavCtrl extends GetxController {
   final navNameList = <String>['Home', 'oas1'].obs; // 列表
   final selectedIndex = 0.obs;
@@ -82,14 +84,15 @@ class NavCtrl extends GetxController {
     return result;
   }
 
-  void switchContent(String menu) {
-    if (!useablemenus.contains(menu)) {
+  void switchContent(String menu, {bool force = false}) {
+    if (!force && !useablemenus.contains(menu)) {
       return;
     }
     selectedMenu.value = menu;
 
     // args的切换
-    if (['Home', 'Overview', 'Updater', 'Tool'].contains(menu)) {
+    if (['Home', 'Overview', 'Updater', 'Tool', kOrchestraMenu]
+        .contains(menu)) {
       return;
     }
     if (selectedScript.value == 'Home') {

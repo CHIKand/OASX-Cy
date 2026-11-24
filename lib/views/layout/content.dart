@@ -6,6 +6,7 @@ import 'package:oasx/views/home/home_view.dart';
 import 'package:oasx/views/home/tool_view.dart';
 import 'package:oasx/views/home/updater_view.dart';
 import 'package:oasx/views/nav/view_nav.dart';
+import 'package:oasx/views/orchestra/orchestra_view.dart';
 import 'package:oasx/views/overview/overview_view.dart';
 
 Widget content() {
@@ -19,6 +20,7 @@ Widget content() {
       ['Home', 'Tool'] => const ToolView(),
       // ignore: prefer_const_constructors, unused_local_variable
       [String name, 'Overview'] => Overview(),
+      [String name, kOrchestraMenu] => OrchestraView(script: name),
       _ => const Args(),
     };
   });
