@@ -162,7 +162,7 @@ class OrchestraSettings {
       };
 }
 
-/// 运行进度，给运行面板用，只取面板用到的键。构造参数为 null 时取后端的默认值。
+/// 运行进度，给运行面板和控制按钮用，只取页面用到的键。构造参数为 null 时取后端的默认值。
 /// 后端多给的键不读，如 paused、saved_params 和各时间戳。
 class OrchestraProgress {
   // idle / ready / row_running / resting / interrupted / done
@@ -174,6 +174,8 @@ class OrchestraProgress {
   final double? rowElapsedSeconds; // 本行已跑的秒数，只在 row_running 阶段有值
   final double? restRemainingSeconds; // 剩余休息秒数，只在休息中（含休息时暂停）有值
   final double totalElapsed; // 秒
+  // 实例已处理到的命令序号；小于设置里的 command_seq 时，最新的命令实例还没处理
+  final int lastCommandSeq;
   final List<Map<String, dynamic>> history;
   final String statusNote; // 如 防封禁休眠中，08:00 继续
 
@@ -186,12 +188,14 @@ class OrchestraProgress {
     this.rowElapsedSeconds,
     this.restRemainingSeconds,
     double? totalElapsed,
+    int? lastCommandSeq,
     List<Map<String, dynamic>>? history,
     String? statusNote,
   })  : phase = phase ?? 'idle',
         rowIndex = rowIndex ?? 0,
         loopCount = loopCount ?? 0,
         totalElapsed = totalElapsed ?? 0.0,
+        lastCommandSeq = lastCommandSeq ?? 0,
         history = history ?? [],
         statusNote = statusNote ?? '';
 
@@ -205,6 +209,7 @@ class OrchestraProgress {
         rowElapsedSeconds: _double(json['row_elapsed_seconds']),
         restRemainingSeconds: _double(json['rest_remaining_seconds']),
         totalElapsed: _double(json['total_elapsed']),
+        lastCommandSeq: _int(json['last_command_seq']),
         history: _maps(json['history']),
         statusNote: _string(json['status_note']),
       );
@@ -218,6 +223,7 @@ class OrchestraProgress {
         'row_elapsed_seconds': rowElapsedSeconds,
         'rest_remaining_seconds': restRemainingSeconds,
         'total_elapsed': totalElapsed,
+        'last_command_seq': lastCommandSeq,
         'history': history,
         'status_note': statusNote,
       };

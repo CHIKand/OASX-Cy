@@ -33,6 +33,7 @@ const _sample = r'''
     "row_elapsed_seconds": 12.5,
     "rest_remaining_seconds": 287.5,
     "total_elapsed": 1830.25,
+    "last_command_seq": 3,
     "history": [
       {"row_index": 0, "task": "Orochi", "started_at": "2026-11-21T08:00:00",
        "ended_at": "2026-11-21T08:30:12.500000", "done_count": 50, "loop_count": 2}
@@ -82,7 +83,6 @@ void main() {
       'rest_until': null,
       'rest_remaining': null,
       'saved_params': {'evo_zone.evo_zone_config.layer': '壹层'},
-      'last_command_seq': 3,
       'paused': false,
     });
     for (final entry in withExtras['catalog'] as List) {
@@ -123,6 +123,7 @@ void main() {
       'row_elapsed_seconds': null,
       'rest_remaining_seconds': null,
       'total_elapsed': 0.0,
+      'last_command_seq': 0,
       'history': [],
       'status_note': '',
     };
@@ -141,6 +142,12 @@ void main() {
       expect(bundle.progress.toJson(), defaultProgress);
       expect(bundle.catalog, isEmpty);
     }
+
+    // 类型不对同缺键：已处理的命令序号取 0
+    expect(
+        OrchestraProgress.fromJson({'last_command_seq': '3'})
+            .toJson()['last_command_seq'],
+        0);
 
     // 行与目录项缺键时同样取默认值
     final partial = OrchestraBundle.fromJson({

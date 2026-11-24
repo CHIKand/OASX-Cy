@@ -384,10 +384,21 @@ void main() {
     expect(pressed('停止'), isNotNull);
     expect(pressed('跳过休息'), isNotNull);
 
+    // 暂停、停止先停实例再写配置：没做成时实例可能已经停下，不能说未执行
+    for (final label in ['暂停', '停止']) {
+      await tester.tap(find.widgetWithText(OutlinedButton, label));
+      await _frames(tester);
+      expect(find.text('OAS 没能完成「$label」，实例可能已停下，请到总览查看'), findsOneWidget,
+          reason: label);
+      expect(find.textContaining('OAS 未执行'), findsNothing, reason: label);
+    }
+
+    // 跳过休息不启停实例，后端不在休息中时直接拒绝：照旧说未执行
     await tester.tap(find.text('跳过休息'));
     await _frames(tester);
-    expect(actions, ['skip_rest']);
+    expect(actions, ['pause', 'stop', 'skip_rest']);
     expect(find.text('OAS 未执行「跳过休息」：只在休息中可用'), findsOneWidget);
+    expect(find.textContaining('没能完成'), findsNothing);
   });
 
   testWidgets('test_view_run_panel_by_phase', (tester) async {
@@ -449,6 +460,47 @@ void main() {
     await _nextPoll(tester);
     expect(find.text('提示：已跑完'), findsOneWidget);
     expect(find.text('状态：已跑完'), findsOneWidget);
+  });
+
+  testWidgets('test_start_pending_from_done', (tester) async {
+    // 从已跑完按开始：后端只写配置、重启实例，进度要等新实例第一次选任务才重置。
+    // 在那之前进度还是已跑完：状态、提示同刚开始的序列，开始不可再按（再按会把正在启动的实例又重启一次）
+    final rows = [
+      {'task': 'Orochi'},
+      {'task': 'RealmRaid'},
+    ];
+    OrchestraBundle done(String state, int lastCommandSeq) => _bundle(rows,
+        settings: {'state': state, 'command': 'start', 'command_seq': 4},
+        progress: {
+          'phase': 'done',
+          'row_index': 1,
+          'last_command_seq': lastCommandSeq,
+        });
+    var server = done('running', 3);
+    await _show(tester, (_) async => server);
+    VoidCallback? pressed(String label) => tester
+        .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, label))
+        .onPressed;
+    expect(find.text('状态：已开始，等待实例响应'), findsOneWidget);
+    expect(find.text('提示：—'), findsOneWidget);
+    expect(find.textContaining('已跑完'), findsNothing);
+    expect(pressed('开始'), isNull);
+    expect(pressed('继续'), isNull); // 继续的可用性不变
+
+    // 实例已处理这条开始（序号对齐）：照旧是已跑完，开始可用
+    server = done('running', 4);
+    await _nextPoll(tester);
+    expect(find.text('状态：已跑完'), findsOneWidget);
+    expect(find.text('提示：已跑完'), findsOneWidget);
+    expect(pressed('开始'), isNotNull);
+
+    // 序列停着却留着没处理的开始（暂停、停止后写进度失败，或进度文件丢了）：实例不会因此开跑，
+    // 不算等待响应，开始照常可用
+    server = done('idle', 3);
+    await _nextPoll(tester);
+    expect(find.text('状态：已跑完'), findsOneWidget);
+    expect(find.text('提示：已跑完'), findsOneWidget);
+    expect(pressed('开始'), isNotNull);
   });
 
   testWidgets('test_view_current_row_after_mid_run_table_edit', (tester) async {
@@ -692,7 +744,7 @@ void main() {
     await tester.tap(find.text('继续'));
     await _frames(tester);
     expect(actions, ['resume']);
-    expect(find.textContaining('OAS 未执行'), findsNothing);
+    expect(find.textContaining('「继续」'), findsNothing); // 没有失败提示
 
     // 出错退出同样算没在跑
     instance.value = ScriptState.warning;

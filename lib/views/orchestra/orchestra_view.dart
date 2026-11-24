@@ -438,8 +438,10 @@ class _OrchestraPageState extends State<_OrchestraPage> {
   Widget _controlCard(BuildContext context, OrchestraBundle bundle, bool dirty,
       bool instanceStopped) {
     final state = bundle.settings.state;
-    final active = (state == 'running' || state == 'paused') &&
-        bundle.progress.phase != 'done';
+    // 已按开始、实例还没响应时，进度可能还是已跑完：同样算在进行，再按会把正在启动的实例又重启一次
+    final active = _startPending(bundle) ||
+        ((state == 'running' || state == 'paused') &&
+            bundle.progress.phase != 'done');
     Widget button(String action, String label, bool enabled) => OutlinedButton(
           onPressed:
               enabled && !_sending ? () => _command(action, label) : null,
@@ -608,11 +610,12 @@ class _OrchestraPageState extends State<_OrchestraPage> {
       if (mounted) {
         setState(() {
           _sending = false;
-          // 后端不接受时也回 HTTP 200，请求层不会提示，这里要说
+          // 后端不接受时也回 HTTP 200，请求层不会提示，这里要说。
+          // 开始、暂停、继续、停止先停实例再写配置，没做成时实例可能已经停下，不能说未执行
           if (!ok) {
             _commandNotice = action == 'skip_rest'
                 ? 'OAS 未执行「$label」：只在休息中可用'
-                : 'OAS 未执行「$label」，请检查与 OAS 的连接';
+                : 'OAS 没能完成「$label」，实例可能已停下，请到总览查看';
           }
         });
       }
@@ -645,6 +648,8 @@ class _OrchestraPageState extends State<_OrchestraPage> {
       case 'paused':
         return '已暂停';
       case 'running':
+        // 已按开始、实例还没响应：进度还是开始前的（如已跑完），不按它的阶段说
+        if (_startPending(b)) return '已开始，等待实例响应';
         return switch (p.phase) {
           'row_running' => '运行中（$row）',
           'ready' => '运行中（等待$row）',
@@ -758,6 +763,8 @@ class _OrchestraPageState extends State<_OrchestraPage> {
 
   /// 提示：按进度阶段生成，后端给了 status_note 就接在后面。
   String _hintText(OrchestraBundle b) {
+    // 已按开始、实例还没响应：进度还是开始前的（如已跑完），同刚开始的序列，没有提示
+    if (_startPending(b)) return '—';
     final p = b.progress;
     final state = b.settings.state;
     final resume = b.settings.resumePolicy == 'rerun' ? '整行重跑' : '补完剩余';
@@ -788,6 +795,14 @@ bool _frozenByInstance(OrchestraBundle b, bool instanceStopped) =>
     b.settings.state == 'running' &&
     const {'row_running', 'ready', 'resting', 'interrupted'}
         .contains(b.progress.phase);
+
+/// 已按开始，实例还没处理这条开始命令：后端只写配置、重启实例，进度要等新实例第一次选任务才重置，
+/// 在那之前还是开始前的样子（如已跑完）。同后端 _start_pending，另要求序列在跑：暂停、停止后写进度失败，
+/// 或进度文件丢了，停着的序列会留着一条没处理的开始，实例不会因此开跑，不算。
+bool _startPending(OrchestraBundle b) =>
+    b.settings.state == 'running' &&
+    b.settings.command == 'start' &&
+    b.settings.commandSeq > b.progress.lastCommandSeq;
 
 /// 实例进程的状态，与总览同源：ScriptService 随 websocket 推送更新，在 Obx 里读会跟着刷新。
 /// 服务还没登记（启动时异步登记）或其中没有这个实例时为 null。
