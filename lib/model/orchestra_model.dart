@@ -163,11 +163,12 @@ class OrchestraSettings {
 }
 
 /// 运行进度，给运行面板用，只取面板用到的键。构造参数为 null 时取后端的默认值。
-/// 后端多给的键不读，如 row_task、paused、saved_params 和各时间戳。
+/// 后端多给的键不读，如 paused、saved_params 和各时间戳。
 class OrchestraProgress {
   // idle / ready / row_running / resting / interrupted / done
   final String phase;
   final int rowIndex;
+  final String? rowTask; // 正在跑或被打断的那一行的任务，没有为 null；表在运行中改过时凭它认行
   final int loopCount;
   final int? doneCount; // 本行已完成的次数，未知为 null
   final double? rowElapsedSeconds; // 本行已跑的秒数，只在 row_running 阶段有值
@@ -179,6 +180,7 @@ class OrchestraProgress {
   OrchestraProgress({
     String? phase,
     int? rowIndex,
+    this.rowTask,
     int? loopCount,
     this.doneCount,
     this.rowElapsedSeconds,
@@ -197,6 +199,7 @@ class OrchestraProgress {
       OrchestraProgress(
         phase: _string(json['phase']),
         rowIndex: _int(json['row_index']),
+        rowTask: _string(json['row_task']),
         loopCount: _int(json['loop_count']),
         doneCount: _int(json['done_count']),
         rowElapsedSeconds: _double(json['row_elapsed_seconds']),
@@ -209,6 +212,7 @@ class OrchestraProgress {
   Map<String, dynamic> toJson() => {
         'phase': phase,
         'row_index': rowIndex,
+        'row_task': rowTask,
         'loop_count': loopCount,
         'done_count': doneCount,
         'row_elapsed_seconds': rowElapsedSeconds,

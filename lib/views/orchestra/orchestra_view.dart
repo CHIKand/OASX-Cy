@@ -655,9 +655,17 @@ class _OrchestraPageState extends State<_OrchestraPage> {
     final p = b.progress;
     if (p.phase != 'row_running') return '—';
     final rows = b.settings.rows;
-    final row =
-        p.rowIndex >= 0 && p.rowIndex < rows.length ? rows[p.rowIndex] : null;
-    final parts = [_rowAt(b, p.rowIndex)];
+    final i = p.rowIndex;
+    OrchestraRow? row = i >= 0 && i < rows.length ? rows[i] : null;
+    var label = _rowAt(b, i);
+    // 运行中改过表，这个位置已换了任务（如在它上面插行、删行）：跑的仍是改表前那一行，
+    // 上限是它开始时写进任务的。名称按进度里的任务给，上限不拿新表的数
+    final task = p.rowTask;
+    if (task != null && task != row?.task) {
+      label = '第 ${i + 1} 行 ${c.specOf(task)?.title ?? task}（表已改）';
+      row = null;
+    }
+    final parts = [label];
     if (p.doneCount != null || row?.maxCount != null) {
       parts.add('已打 ${p.doneCount ?? '—'} 次 / ${row?.maxCount ?? '—'}');
     }

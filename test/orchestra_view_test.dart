@@ -427,6 +427,48 @@ void main() {
     expect(find.text('状态：已跑完'), findsOneWidget);
   });
 
+  testWidgets('test_view_current_row_after_mid_run_table_edit', (tester) async {
+    // 运行中在正跑的行上面插了一行并保存：跑的仍是原来那行的爬塔，新表的第 2 行是个人突破
+    final rows = [
+      {'task': 'FindJade'},
+      {'task': 'RealmRaid', 'max_count': 20},
+    ];
+    OrchestraBundle running(int index, String task) => _bundle(
+          rows,
+          settings: {'state': 'running'},
+          progress: {
+            'phase': 'row_running',
+            'row_index': index,
+            'row_task': task,
+            'done_count': 12,
+            'row_elapsed_seconds': 370.4,
+          },
+        );
+    var server = running(1, 'ActivityShikigami');
+    await _show(tester, (_) async => server);
+    // 名称取进度里的任务；上限是那一行开始时写进任务的，新表里的数不算
+    expect(find.text('当前：第 2 行 限时·爬塔（表已改）   已打 12 次 / —   已用 6:10 / —'),
+        findsOneWidget);
+
+    // 任务不在目录里：显示命令名
+    server = running(1, 'KekkaiUtilize');
+    await _nextPoll(tester);
+    expect(find.text('当前：第 2 行 KekkaiUtilize（表已改）   已打 12 次 / —   已用 6:10 / —'),
+        findsOneWidget);
+
+    // 删过行，行号已超出新表
+    server = running(5, 'Orochi');
+    await _nextPoll(tester);
+    expect(find.text('当前：第 6 行 御魂·八岐大蛇（表已改）   已打 12 次 / —   已用 6:10 / —'),
+        findsOneWidget);
+
+    // 任务对得上：照常按表里这一行显示
+    server = running(1, 'RealmRaid');
+    await _nextPoll(tester);
+    expect(find.text('当前：第 2 行 个人突破   已打 12 次 / 20   已用 6:10 / —'),
+        findsOneWidget);
+  });
+
   testWidgets('test_view_row_buttons', (tester) async {
     final c = await _show(
       tester,

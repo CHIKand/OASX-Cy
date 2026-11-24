@@ -27,6 +27,7 @@ const _sample = r'''
   "progress": {
     "phase": "row_running",
     "row_index": 1,
+    "row_task": "EvoZone",
     "loop_count": 2,
     "done_count": 7,
     "row_elapsed_seconds": 12.5,
@@ -74,7 +75,6 @@ void main() {
     // 都不保留，也不影响其余各项
     final withExtras = _decode(_sample);
     (withExtras['progress'] as Map<String, dynamic>).addAll({
-      'row_task': 'EvoZone',
       'sequence_started_at': '2026-11-21T08:00:00',
       'row_started_at': '2026-11-21T08:30:13',
       'heartbeat_at': '2026-11-21T08:30:25',
@@ -117,6 +117,7 @@ void main() {
     const defaultProgress = {
       'phase': 'idle',
       'row_index': 0,
+      'row_task': null,
       'loop_count': 0,
       'done_count': null,
       'row_elapsed_seconds': null,
