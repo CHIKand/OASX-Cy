@@ -487,6 +487,44 @@ void main() {
     expect(reads, {'oas1': 2, 'oas2': 3});
   });
 
+  testWidgets('test_view_relayout_keeps_polling', (tester) async {
+    var reads = 0;
+    Get.put(
+      OrchestraController('oas1', getOrchestra: (_) async {
+        reads++;
+        return _bundle([]);
+      }),
+      tag: 'oas1',
+    );
+    // 窗口宽度跨过桌面与窄屏布局的分界时，页面换到别的父节点下重建：
+    // 同一帧里同一实例的新页先建、旧页后销毁
+    Widget layout({required bool wide}) => MaterialApp(
+          home: Scaffold(
+            body: wide
+                ? const Row(children: [
+                    SizedBox(width: 10),
+                    Expanded(child: OrchestraView(script: 'oas1')),
+                  ])
+                : const Center(child: OrchestraView(script: 'oas1')),
+          ),
+        );
+    await tester.pumpWidget(layout(wide: true));
+    expect(reads, 1);
+
+    // 换布局后照常每 2 秒读一次
+    await tester.pumpWidget(layout(wide: false));
+    await tester.pump(const Duration(seconds: 4));
+    expect(reads, 3);
+    await tester.pumpWidget(layout(wide: true));
+    await tester.pump(const Duration(seconds: 4));
+    expect(reads, 5);
+
+    // 最后一个页面没了才停
+    await tester.pumpWidget(_app(null));
+    await tester.pump(const Duration(seconds: 4));
+    expect(reads, 5);
+  });
+
   test('test_assets_check_url_adds_scheme_only_when_missing', () {
     expect(assetsCheckUrl('127.0.0.1:22288'),
         'http://127.0.0.1:22288/tool/assets-check');

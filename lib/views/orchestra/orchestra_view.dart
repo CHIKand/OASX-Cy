@@ -64,6 +64,11 @@ class _OrchestraPage extends StatefulWidget {
 }
 
 class _OrchestraPageState extends State<_OrchestraPage> {
+  /// 每个控制器上挂着几个编排页。窗口宽度跨过桌面与窄屏布局的分界时，页面换到别的父节点下重建：
+  /// 同一帧里同一实例的新页先建（开始轮询时定时器还在，什么也不做），旧页后销毁。
+  /// 所以只在最后一个页面销毁时停止轮询，否则看得见的页面再也收不到数据。
+  static final _pages = Expando<int>();
+
   late final OrchestraController c;
   bool _saving = false; // 保存请求未回
   bool? _saved; // 最近一次保存的结果，下次编辑时清除
@@ -77,12 +82,15 @@ class _OrchestraPageState extends State<_OrchestraPage> {
     c = Get.isRegistered<OrchestraController>(tag: tag)
         ? Get.find<OrchestraController>(tag: tag)
         : Get.put(OrchestraController(tag), tag: tag);
+    _pages[c] = (_pages[c] ?? 0) + 1;
     c.startPolling();
   }
 
   @override
   void dispose() {
-    c.stopPolling();
+    final left = (_pages[c] ?? 1) - 1;
+    _pages[c] = left > 0 ? left : null;
+    if (left <= 0) c.stopPolling();
     super.dispose();
   }
 
