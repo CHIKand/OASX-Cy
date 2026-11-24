@@ -469,9 +469,12 @@ void main() {
       {'task': 'Orochi'},
       {'task': 'RealmRaid'},
     ];
-    OrchestraBundle done(String state, int lastCommandSeq) => _bundle(rows,
-        settings: {'state': state, 'command': 'start', 'command_seq': 4},
-        progress: {
+    OrchestraBundle done(String state, int lastCommandSeq) =>
+        _bundle(rows, settings: {
+          'state': state,
+          'command': 'start',
+          'command_seq': 4
+        }, progress: {
           'phase': 'done',
           'row_index': 1,
           'last_command_seq': lastCommandSeq,
