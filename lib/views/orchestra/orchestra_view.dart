@@ -5,7 +5,7 @@
 // - 没有未保存的修改时，editor、draft 随每次轮询整个换掉，所以构建和回调都从控制器现取，不留引用。
 // - 改完草稿调 edited()，它每次都换一份新的 errors。dirty 只在第一次编辑时通知，
 //   所以页面靠 bundle（每次轮询换新）和 errors 重建。
-// - 实例进程在不在运行另取自总览用的 ScriptService：进度只由实例写，实例停了进度就停住。
+// - 实例进程在不在运行另取自总览用的 ScriptService：序列在跑时进度由实例写，实例停了进度就停住。
 
 import 'dart:math' as math;
 
@@ -132,7 +132,7 @@ class _OrchestraPageState extends State<_OrchestraPage> {
           _header(context, bundle, instanceStopped),
           _tableCard(context, bundle, errors),
           _settingsCard(context, bundle, errors[-1] ?? const {}, dirty),
-          _controlCard(context, bundle, dirty),
+          _controlCard(context, bundle, dirty, instanceStopped),
           _panelCard(context, bundle, readFailing,
               _frozenByInstance(bundle, instanceStopped)),
         ];
@@ -435,8 +435,8 @@ class _OrchestraPageState extends State<_OrchestraPage> {
         .card(margin: const EdgeInsets.only(bottom: 10));
   }
 
-  Widget _controlCard(
-      BuildContext context, OrchestraBundle bundle, bool dirty) {
+  Widget _controlCard(BuildContext context, OrchestraBundle bundle, bool dirty,
+      bool instanceStopped) {
     final state = bundle.settings.state;
     final active = (state == 'running' || state == 'paused') &&
         bundle.progress.phase != 'done';
@@ -451,7 +451,9 @@ class _OrchestraPageState extends State<_OrchestraPage> {
         // 开始按已保存的表运行，有未保存的修改时先保存
         button('start', '开始', !dirty && !active),
         button('pause', '暂停', state == 'running'),
-        button('resume', '继续', state == 'paused'),
+        // 继续会启动实例：暂停时可用；序列在跑而实例确知没在运行时也可用，启动实例接着跑
+        button('resume', '继续',
+            state == 'paused' || (state == 'running' && instanceStopped)),
         button('stop', '停止', state == 'running' || state == 'paused'),
         button('skip_rest', '跳过休息', bundle.progress.phase == 'resting'),
       ].toWrap(spacing: 8, runSpacing: 8),
@@ -627,18 +629,11 @@ class _OrchestraPageState extends State<_OrchestraPage> {
   }
 
   /// 状态行。instanceStopped：实例确知没在运行，进度不会再动。
+  /// 暂停、停止会立即停下实例，正在打的行随之中断，所以状态行只按配置里的运行状态显示。
   String _statusText(OrchestraBundle b, bool instanceStopped) {
-    final state = b.settings.state;
-    // 停止、暂停只写配置，实例下一次选任务时才照办：正在跑的这一行先打完。
-    // 实例没在运行时这一行不会接着打，不这样说
-    if (b.progress.phase == 'row_running' &&
-        state != 'running' &&
-        !instanceStopped) {
-      return state == 'paused' ? '暂停中（本行打完后暂停）' : '停止中（本行打完后停止）';
-    }
     final text = _sequenceStateText(b);
     return _frozenByInstance(b, instanceStopped)
-        ? '$text · 实例未运行，启动实例后继续'
+        ? '$text · 实例未运行，按继续接着跑'
         : text;
   }
 
@@ -765,13 +760,17 @@ class _OrchestraPageState extends State<_OrchestraPage> {
   String _hintText(OrchestraBundle b) {
     final p = b.progress;
     final state = b.settings.state;
+    final resume = b.settings.resumePolicy == 'rerun' ? '整行重跑' : '补完剩余';
     // 序列已停止：停止会丢掉续跑，不说中断的行怎么续
     final idle = state != 'running' && state != 'paused';
     final base = switch (p.phase) {
+      // 暂停立即停下实例，正在打的行就此中断；进度里可能还记着行运行中
+      'row_running' ||
+      'interrupted' when state == 'paused' =>
+        '第 ${p.rowIndex + 1} 行已中断，继续后将$resume',
       'resting' => '休息中，还剩 ${_mmss((p.restRemainingSeconds ?? 0).ceil())}',
       'interrupted' when idle => '第 ${p.rowIndex + 1} 行中断',
-      'interrupted' =>
-        '第 ${p.rowIndex + 1} 行中断，将${b.settings.resumePolicy == 'rerun' ? '整行重跑' : '补完剩余'}',
+      'interrupted' => '第 ${p.rowIndex + 1} 行中断，将$resume',
       'done' => '已跑完',
       _ => '',
     };
@@ -781,11 +780,12 @@ class _OrchestraPageState extends State<_OrchestraPage> {
   }
 }
 
-/// 序列在跑或暂停，实例却确知没在运行：进度只由实例写，停在它停下时，直到实例再启动。
+/// 序列在跑，实例却确知没在运行：进度停在实例停下时，实例再启动（如按继续）才接着跑。
 /// 这几个阶段等着实例接着跑；已跑完、没开始的不算。
+/// 暂停会停下实例，暂停时实例不在运行是常态，不算。
 bool _frozenByInstance(OrchestraBundle b, bool instanceStopped) =>
     instanceStopped &&
-    (b.settings.state == 'running' || b.settings.state == 'paused') &&
+    b.settings.state == 'running' &&
     const {'row_running', 'ready', 'resting', 'interrupted'}
         .contains(b.progress.phase);
 

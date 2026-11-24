@@ -493,10 +493,9 @@ void main() {
         findsOneWidget);
   });
 
-  testWidgets('test_view_instance_stopped_marks_status_and_panel',
-      (tester) async {
-    // 实例在总览里停了（或出错退出），进度还停在它停下时：
-    // 状态行说明实例未运行，运行面板像数据过时那样标出来
+  testWidgets('test_running_instance_stopped_qualifier', (tester) async {
+    // 序列在跑，实例却在总览里停了（或出错退出），进度还停在它停下时：
+    // 状态行说明实例未运行、按继续接着跑，运行面板像数据过时那样标出来
     final instance = Rx<ScriptState?>(ScriptState.inactive);
     final rows = [
       {'task': 'Orochi', 'max_count': 30},
@@ -508,19 +507,12 @@ void main() {
       progress: {'phase': 'row_running', 'row_index': 0, 'done_count': 12},
     );
     await _show(tester, (_) async => server, instance: (_) => instance.value);
-    const qualifier = ' · 实例未运行，启动实例后继续';
+    const qualifier = ' · 实例未运行，按继续接着跑';
     final mark = find.text('实例未运行，进度停在实例停止时');
     expect(find.text('状态：运行中（第 1 行）$qualifier'), findsOneWidget);
     expect(mark, findsOneWidget);
     expect(tester.widget<Text>(mark).style?.color,
         Theme.of(tester.element(mark)).colorScheme.error);
-    // 哪些按钮能点不因此改变
-    VoidCallback? pressed(String label) => tester
-        .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, label))
-        .onPressed;
-    expect(pressed('开始'), isNull);
-    expect(pressed('暂停'), isNotNull);
-    expect(pressed('停止'), isNotNull);
 
     // 实例在跑，或还不知道（刚连上为 updating，总览里没有这个实例为 null）：不加
     for (final state in [ScriptState.running, ScriptState.updating, null]) {
@@ -530,24 +522,24 @@ void main() {
       expect(mark, findsNothing, reason: '$state');
     }
 
-    // 出错退出同样算没在跑；序列的其余几个阶段、暂停时也加
+    // 出错退出同样算没在跑；序列的其余几个阶段也加
     instance.value = ScriptState.warning;
-    for (final (state, phase, text) in [
-      ('running', 'ready', '运行中（等待第 2 行）'),
-      ('running', 'resting', '运行中（休息）'),
-      ('running', 'interrupted', '运行中（第 2 行中断）'),
-      ('paused', 'resting', '已暂停'),
+    for (final (phase, text) in [
+      ('ready', '运行中（等待第 2 行）'),
+      ('resting', '运行中（休息）'),
+      ('interrupted', '运行中（第 2 行中断）'),
     ]) {
       server = _bundle(rows,
-          settings: {'state': state},
+          settings: {'state': 'running'},
           progress: {'phase': phase, 'row_index': 1});
       await _nextPoll(tester);
       expect(find.text('状态：$text$qualifier'), findsOneWidget, reason: phase);
       expect(mark, findsOneWidget, reason: phase);
     }
 
-    // 序列已停止或已跑完，启动实例也不会接着跑：不加
+    // 暂停会停下实例，暂停时实例不在运行是常态；序列已停止或已跑完，启动实例也不会接着跑：都不加
     for (final (state, phase, text) in [
+      ('paused', 'resting', '已暂停'),
       ('idle', 'interrupted', '未运行'),
       ('running', 'done', '已跑完'),
     ]) {
@@ -555,8 +547,8 @@ void main() {
           settings: {'state': state},
           progress: {'phase': phase, 'row_index': 1});
       await _nextPoll(tester);
-      expect(find.text('状态：$text'), findsOneWidget, reason: phase);
-      expect(mark, findsNothing, reason: phase);
+      expect(find.text('状态：$text'), findsOneWidget, reason: '$state $phase');
+      expect(mark, findsNothing, reason: '$state $phase');
     }
   });
 
@@ -579,16 +571,167 @@ void main() {
         },
       ),
     );
-    expect(find.text('状态：运行中（休息） · 实例未运行，启动实例后继续'), findsOneWidget);
+    expect(find.text('状态：运行中（休息） · 实例未运行，按继续接着跑'), findsOneWidget);
 
     model.state.value = ScriptState.running;
     await tester.pump();
     expect(find.text('状态：运行中（休息）'), findsOneWidget);
   });
 
-  testWidgets('test_view_stop_or_pause_mid_row_waits_for_row_end',
-      (tester) async {
-    // 停止、暂停只改配置，实例下一次选任务时才照办：正在跑的这一行先打完
+  testWidgets('test_paused_status_plain', (tester) async {
+    // 暂停会立即停下实例，正在打的行算中断：状态行只说已暂停，不说本行打完后，
+    // 也不加实例未运行的说明，运行面板不标；实例在不在跑、知不知道都一样
+    final instance = Rx<ScriptState?>(ScriptState.inactive);
+    await _show(
+      tester,
+      (_) async => _bundle(
+        [
+          {'task': 'Orochi'},
+        ],
+        settings: {'state': 'paused'},
+        progress: {'phase': 'row_running', 'row_index': 0},
+      ),
+      instance: (_) => instance.value,
+    );
+    for (final state in [
+      ScriptState.inactive,
+      ScriptState.warning,
+      ScriptState.running,
+      ScriptState.updating,
+      null,
+    ]) {
+      instance.value = state;
+      await tester.pump();
+      expect(find.text('状态：已暂停'), findsOneWidget, reason: '$state');
+      expect(find.textContaining('本行打完后'), findsNothing, reason: '$state');
+      expect(find.textContaining('实例未运行'), findsNothing, reason: '$state');
+    }
+  });
+
+  testWidgets('test_paused_interrupted_hint', (tester) async {
+    // 暂停时正在打的行已中断（进度里可能还记着行运行中）：提示按「中断后」的设置说继续后怎么续
+    final instance = Rx<ScriptState?>(ScriptState.inactive);
+    final rows = [
+      {'task': 'Orochi'},
+      {'task': 'RealmRaid'},
+    ];
+    var server = _bundle(rows,
+        settings: {'state': 'paused'},
+        progress: {'phase': 'row_running', 'row_index': 0});
+    await _show(tester, (_) async => server, instance: (_) => instance.value);
+    expect(find.text('提示：第 1 行已中断，继续后将补完剩余'), findsOneWidget);
+    expect(find.text('状态：已暂停'), findsOneWidget);
+
+    server = _bundle(rows,
+        settings: {'state': 'paused', 'resume_policy': 'rerun'},
+        progress: {'phase': 'row_running', 'row_index': 0});
+    await _nextPoll(tester);
+    expect(find.text('提示：第 1 行已中断，继续后将整行重跑'), findsOneWidget);
+
+    // 已记为中断的行同样这样说
+    for (final (policy, text) in [
+      ('remaining', '补完剩余'),
+      ('rerun', '整行重跑'),
+    ]) {
+      server = _bundle(rows,
+          settings: {'state': 'paused', 'resume_policy': policy},
+          progress: {'phase': 'interrupted', 'row_index': 1});
+      await _nextPoll(tester);
+      expect(find.text('提示：第 2 行已中断，继续后将$text'), findsOneWidget,
+          reason: policy);
+    }
+
+    // 暂停后在总览里启动了实例也一样：序列要按继续才接着跑
+    instance.value = ScriptState.running;
+    await tester.pump();
+    expect(find.text('提示：第 2 行已中断，继续后将整行重跑'), findsOneWidget);
+
+    // 休息中暂停，没有行被打断：照常显示剩余休息
+    server = _bundle(
+      rows,
+      settings: {'state': 'paused'},
+      progress: {
+        'phase': 'resting',
+        'row_index': 1,
+        'rest_remaining_seconds': 245.2,
+      },
+    );
+    await _nextPoll(tester);
+    expect(find.text('提示：休息中，还剩 04:06'), findsOneWidget);
+  });
+
+  testWidgets('test_resume_enabled_when_instance_stopped', (tester) async {
+    // 序列在跑，实例却确知没在运行：继续可用，后端会启动实例接着跑；其余按钮的可用性不因此改变
+    final actions = <String>[];
+    final instance = Rx<ScriptState?>(ScriptState.inactive);
+    final rows = [
+      {'task': 'Orochi'},
+      {'task': 'RealmRaid'},
+    ];
+    var server = _bundle(rows,
+        settings: {'state': 'running'},
+        progress: {'phase': 'row_running', 'row_index': 0});
+    await _show(
+      tester,
+      (_) async => server,
+      command: (_, action) async {
+        actions.add(action);
+        return true;
+      },
+      instance: (_) => instance.value,
+    );
+    VoidCallback? pressed(String label) => tester
+        .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, label))
+        .onPressed;
+    expect(pressed('继续'), isNotNull);
+    expect(pressed('开始'), isNull);
+    expect(pressed('暂停'), isNotNull);
+    expect(pressed('停止'), isNotNull);
+    expect(pressed('跳过休息'), isNull);
+
+    await tester.tap(find.text('继续'));
+    await _frames(tester);
+    expect(actions, ['resume']);
+    expect(find.textContaining('OAS 未执行'), findsNothing);
+
+    // 出错退出同样算没在跑
+    instance.value = ScriptState.warning;
+    await tester.pump();
+    expect(pressed('继续'), isNotNull);
+
+    // 实例在跑，或还不知道（刚连上为 updating，总览里没有这个实例为 null）：不可用
+    for (final state in [ScriptState.running, ScriptState.updating, null]) {
+      instance.value = state;
+      await tester.pump();
+      expect(pressed('继续'), isNull, reason: '$state');
+      expect(pressed('开始'), isNull, reason: '$state');
+      expect(pressed('暂停'), isNotNull, reason: '$state');
+      expect(pressed('停止'), isNotNull, reason: '$state');
+    }
+
+    // 暂停时照旧可用，不论实例在不在跑
+    server = _bundle(rows,
+        settings: {'state': 'paused'},
+        progress: {'phase': 'row_running', 'row_index': 0});
+    await _nextPoll(tester);
+    for (final state in [ScriptState.running, ScriptState.inactive, null]) {
+      instance.value = state;
+      await tester.pump();
+      expect(pressed('继续'), isNotNull, reason: '$state');
+      expect(pressed('开始'), isNull, reason: '$state');
+    }
+
+    // 序列已停止：实例没在运行也不可用，开始照常可用
+    instance.value = ScriptState.inactive;
+    server = _bundle(rows);
+    await _nextPoll(tester);
+    expect(pressed('继续'), isNull);
+    expect(pressed('开始'), isNotNull);
+  });
+
+  testWidgets('test_view_stop_mid_row_no_row_end_wording', (tester) async {
+    // 停止立即停下实例、进度清零，不再等本行打完。进度没清零时（如写进度失败）也只说未运行，
+    // 实例在跑、还不知道时都一样
     final instance = Rx<ScriptState?>(ScriptState.running);
     final rows = [
       {'task': 'Orochi'},
@@ -598,49 +741,20 @@ void main() {
         settings: {'state': 'idle'},
         progress: {'phase': 'row_running', 'row_index': 0});
     await _show(tester, (_) async => server, instance: (_) => instance.value);
-    expect(find.text('状态：停止中（本行打完后停止）'), findsOneWidget);
-    // 实例状态不知道时同样这样说：只有确知实例没在跑才不说
-    instance.value = null;
-    await tester.pump();
-    expect(find.text('状态：停止中（本行打完后停止）'), findsOneWidget);
+    for (final state in [ScriptState.running, null]) {
+      instance.value = state;
+      await tester.pump();
+      expect(find.text('状态：未运行'), findsOneWidget, reason: '$state');
+      expect(find.textContaining('本行打完后'), findsNothing, reason: '$state');
+    }
 
-    instance.value = ScriptState.running;
-    server = _bundle(rows,
-        settings: {'state': 'paused'},
-        progress: {'phase': 'row_running', 'row_index': 0});
-    await _nextPoll(tester);
-    expect(find.text('状态：暂停中（本行打完后暂停）'), findsOneWidget);
-
-    // 停止会丢掉续跑：中断的那一行不再补完或重跑，提示不再这样说
+    // 停止会丢掉续跑：中断的那一行不再补完或重跑，提示不这样说
     server = _bundle(rows,
         settings: {'state': 'idle'},
         progress: {'phase': 'interrupted', 'row_index': 1});
     await _nextPoll(tester);
     expect(find.text('状态：未运行'), findsOneWidget);
     expect(find.text('提示：第 2 行中断'), findsOneWidget);
-  });
-
-  testWidgets('test_view_instance_stopped_beats_row_finishes_first',
-      (tester) async {
-    // 实例没在跑，这一行不会接着打：不说本行打完后，只给序列状态加实例未运行的说明
-    final rows = [
-      {'task': 'Orochi'},
-    ];
-    var server = _bundle(rows,
-        settings: {'state': 'paused'},
-        progress: {'phase': 'row_running', 'row_index': 0});
-    await _show(tester, (_) async => server,
-        instance: (_) => ScriptState.inactive);
-    expect(find.text('状态：已暂停 · 实例未运行，启动实例后继续'), findsOneWidget);
-    expect(find.textContaining('本行打完后'), findsNothing);
-
-    // 已停止的序列，实例启动后也不会接着跑：只说未运行
-    server = _bundle(rows,
-        settings: {'state': 'idle'},
-        progress: {'phase': 'row_running', 'row_index': 0});
-    await _nextPoll(tester);
-    expect(find.text('状态：未运行'), findsOneWidget);
-    expect(find.textContaining('本行打完后'), findsNothing);
   });
 
   testWidgets('test_view_long_status_wraps_in_narrow_window', (tester) async {
@@ -659,7 +773,7 @@ void main() {
     tester.view.physicalSize = const Size(480, 2400);
     await tester.pump();
     expect(tester.takeException(), isNull);
-    expect(find.text('状态：运行中（等待第 1 行） · 实例未运行，启动实例后继续'), findsOneWidget);
+    expect(find.text('状态：运行中（等待第 1 行） · 实例未运行，按继续接着跑'), findsOneWidget);
   });
 
   testWidgets('test_view_row_buttons', (tester) async {
