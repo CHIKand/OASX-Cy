@@ -20,6 +20,8 @@ const _sample = r'''
     "rest_jitter": true,
     "resume_policy": "rerun",
     "cut_in_tasks": ["MetaDemon"],
+    "partner": "u",
+    "partner_wait_minutes": 45,
     "state": "running",
     "command": "start",
     "command_seq": 3
@@ -54,7 +56,8 @@ const _sample = r'''
     {"command": "RealmRaid", "title": "个人突破", "count_max": 30, "has_count": true, "has_time": false, "subs": []},
     {"command": "ActivityShikigami", "title": "限时·爬塔", "count_max": null, "has_count": true, "has_time": true,
      "subs": [{"options": ["pass", "ap", "boss", "ap100"], "labels": ["门票", "体力", "Boss", "100体"]}]}
-  ]
+  ],
+  "partners": ["u"]
 }
 ''';
 
@@ -110,6 +113,8 @@ void main() {
       'rest_jitter': false,
       'resume_policy': 'remaining',
       'cut_in_tasks': ['MetaDemon', 'ActivityShikigami'],
+      'partner': '',
+      'partner_wait_minutes': 30,
       'state': 'idle',
       'command': '',
       'command_seq': 0,
@@ -129,11 +134,12 @@ void main() {
     };
     final allNull = <Map<String, dynamic>>[
       {},
-      {'settings': null, 'progress': null, 'catalog': null},
+      {'settings': null, 'progress': null, 'catalog': null, 'partners': null},
       {
         'settings': {for (final key in defaultSettings.keys) key: null},
         'progress': {for (final key in defaultProgress.keys) key: null},
         'catalog': [],
+        'partners': [],
       },
     ];
     for (final json in allNull) {
@@ -141,6 +147,7 @@ void main() {
       expect(bundle.settings.toJson(), defaultSettings);
       expect(bundle.progress.toJson(), defaultProgress);
       expect(bundle.catalog, isEmpty);
+      expect(bundle.partners, isEmpty);
     }
 
     // 类型不对同缺键：已处理的命令序号取 0
@@ -192,6 +199,15 @@ void main() {
         {'options': [], 'labels': []},
       ],
     });
+  });
+
+  test('test_settings_partner_roundtrip', () {
+    final s = OrchestraSettings.fromJson(
+        {'partner': '山川知异路', 'partner_wait_minutes': 45});
+    expect(s.partner, '山川知异路');
+    expect(s.partnerWaitMinutes, 45);
+    expect(s.toJson()['partner'], '山川知异路');
+    expect(s.toJson()['partner_wait_minutes'], 45);
   });
 
   test('test_validate_realm_raid_over_30', () {

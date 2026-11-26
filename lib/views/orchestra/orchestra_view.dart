@@ -46,6 +46,8 @@ const _settingLabels = {
   'rest_jitter': '休息随机浮动',
   'resume_policy': '中断后',
   'cut_in_tasks': '允许插队',
+  'partner': '搭档',
+  'partner_wait_minutes': '等搭档最多',
   'rows': '编排表',
 };
 
@@ -364,6 +366,16 @@ class _OrchestraPageState extends State<_OrchestraPage> {
         extra.add(command);
       }
     }
+    // 搭档的选项：无（空串）和其余实例。草稿里的搭档不在其中时（如那个实例已删掉）也列出来，显示原名，好换掉；
+    // 不列的话 DropdownButton 遇到选项里没有的值会断言失败。服务端那份也算上：换掉后、保存前仍能选回
+    final partners = [''];
+    for (final name in [
+      ...bundle.partners,
+      bundle.settings.partner,
+      d.partner
+    ]) {
+      if (!partners.contains(name)) partners.add(name);
+    }
     return <Widget>[
       Text('序列设置', style: Theme.of(context).textTheme.titleMedium),
       <Widget>[
@@ -403,6 +415,31 @@ class _OrchestraPageState extends State<_OrchestraPage> {
               (v) => _editDraft((s) => s.resumePolicy = v)),
           _radio('整行重跑', 'rerun', d.resumePolicy,
               (v) => _editDraft((s) => s.resumePolicy = v)),
+        ]),
+      ].toWrap(spacing: 24, crossAxisAlignment: WrapCrossAlignment.center),
+      <Widget>[
+        _group('搭档', [
+          DropdownButton<String>(
+            key: const ValueKey('partner'),
+            value: d.partner,
+            items: [
+              for (final name in partners)
+                DropdownMenuItem(
+                    value: name, child: Text(name.isEmpty ? '无' : name)),
+            ],
+            onChanged: (v) => _editDraft((s) => s.partner = v ?? ''),
+          ),
+        ]),
+        _group('等搭档最多', [
+          // 必填项：留空不改，提示文字显示当前值
+          _IntField(
+              key: const ValueKey('partner_wait_minutes'),
+              value: d.partnerWaitMinutes,
+              hint: '${d.partnerWaitMinutes}',
+              onChanged: (v) {
+                if (v != null) _editDraft((s) => s.partnerWaitMinutes = v);
+              }).width(72),
+          const Text(' 分'),
         ]),
       ].toWrap(spacing: 24, crossAxisAlignment: WrapCrossAlignment.center),
       <Widget>[

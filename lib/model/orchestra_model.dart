@@ -107,6 +107,8 @@ class OrchestraSettings {
   bool restJitter;
   String resumePolicy; // remaining / rerun
   List<String> cutInTasks;
+  String partner; // 搭档的实例名，空串表示不等搭档
+  int partnerWaitMinutes; // 等搭档最多多少分钟，1–1439
   String state; // idle / running / paused
   String command;
   int commandSeq;
@@ -119,6 +121,8 @@ class OrchestraSettings {
     bool? restJitter,
     String? resumePolicy,
     List<String>? cutInTasks,
+    String? partner,
+    int? partnerWaitMinutes,
     String? state,
     String? command,
     int? commandSeq,
@@ -128,6 +132,8 @@ class OrchestraSettings {
         restJitter = restJitter ?? false,
         resumePolicy = resumePolicy ?? 'remaining',
         cutInTasks = cutInTasks ?? ['MetaDemon', 'ActivityShikigami'],
+        partner = partner ?? '',
+        partnerWaitMinutes = partnerWaitMinutes ?? 30,
         state = state ?? 'idle',
         command = command ?? '',
         commandSeq = commandSeq ?? 0;
@@ -143,6 +149,8 @@ class OrchestraSettings {
         restJitter: _bool(json['rest_jitter']),
         resumePolicy: _string(json['resume_policy']),
         cutInTasks: _strings(json['cut_in_tasks']),
+        partner: _string(json['partner']),
+        partnerWaitMinutes: _int(json['partner_wait_minutes']),
         state: _string(json['state']),
         command: _string(json['command']),
         commandSeq: _int(json['command_seq']),
@@ -156,6 +164,8 @@ class OrchestraSettings {
         'rest_jitter': restJitter,
         'resume_policy': resumePolicy,
         'cut_in_tasks': cutInTasks,
+        'partner': partner,
+        'partner_wait_minutes': partnerWaitMinutes,
         'state': state,
         'command': command,
         'command_seq': commandSeq,
@@ -229,17 +239,19 @@ class OrchestraProgress {
       };
 }
 
-/// GET /custom/orchestra/{实例} 的返回：编排设置、运行进度、任务目录。
+/// GET /custom/orchestra/{实例} 的返回：编排设置、运行进度、任务目录，以及可选作搭档的实例。
 class OrchestraBundle {
   OrchestraSettings settings;
   OrchestraProgress progress;
   List<TaskCatalogEntry> catalog;
+  List<String> partners; // 除本实例外的实例名，即搭档下拉框的候选
 
   OrchestraBundle({
     required this.settings,
     required this.progress,
     required this.catalog,
-  });
+    List<String>? partners,
+  }) : partners = partners ?? [];
 
   factory OrchestraBundle.fromJson(Map<String, dynamic> json) =>
       OrchestraBundle(
@@ -249,12 +261,14 @@ class OrchestraBundle {
           for (final entry in _maps(json['catalog']))
             TaskCatalogEntry.fromJson(entry)
         ],
+        partners: _strings(json['partners']),
       );
 
   Map<String, dynamic> toJson() => {
         'settings': settings.toJson(),
         'progress': progress.toJson(),
         'catalog': [for (final entry in catalog) entry.toJson()],
+        'partners': partners,
       };
 }
 

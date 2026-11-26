@@ -66,11 +66,13 @@ OrchestraBundle _bundle(
   List<Map<String, dynamic>> rows, {
   Map<String, dynamic> settings = const {},
   Map<String, dynamic> progress = const {},
+  List<String> partners = const [],
 }) =>
     OrchestraBundle.fromJson({
       'settings': {'rows': rows, ...settings},
       'progress': progress,
       'catalog': _catalog,
+      'partners': partners,
     });
 
 Widget _app(String? script, {InstanceStateFn? instance}) => MaterialApp(
@@ -351,6 +353,74 @@ void main() {
     expect(find.text('未保存，请按红字修改'), findsOneWidget);
     expect(save().onPressed, isNotNull); // 可以重试
     expect(c.dirty.value, isTrue);
+  });
+
+  testWidgets('test_view_partner_dropdown_lists_other_instances',
+      (tester) async {
+    final c =
+        await _show(tester, (_) async => _bundle([], partners: ['u', '山川知异路']));
+    await tester.tap(find.byKey(const ValueKey('partner')));
+    await _frames(tester);
+    expect(find.text('无'), findsWidgets);
+    expect(find.text('山川知异路'), findsWidgets);
+    await tester.tap(find.text('u').last);
+    await _frames(tester);
+    expect(c.draft.partner, 'u');
+    expect(c.dirty.value, isTrue);
+  });
+
+  testWidgets('test_view_partner_dropdown_keeps_unknown_value', (tester) async {
+    await _show(
+        tester, (_) async => _bundle([], settings: {'partner': 'gone'}));
+    expect(tester.takeException(), isNull);
+    expect(find.text('gone'), findsOneWidget);
+  });
+
+  testWidgets('test_view_partner_unknown_value_can_be_replaced',
+      (tester) async {
+    // 存着的搭档已不是实例（如删掉了）时，每次保存都报没有这个实例，所以要能换掉：
+    // 选无即不等搭档，草稿里是空串；换掉之后、保存之前，原来的仍在选项里，能选回
+    final c = await _show(
+        tester,
+        (_) async =>
+            _bundle([], settings: {'partner': 'gone'}, partners: ['u']));
+    await tester.tap(find.byKey(const ValueKey('partner')));
+    await _frames(tester);
+    await tester.tap(find.text('无').last);
+    await _frames(tester);
+    expect(c.draft.partner, '');
+    expect(c.dirty.value, isTrue);
+    final dropdown = tester
+        .widget<DropdownButton<String>>(find.byKey(const ValueKey('partner')));
+    expect(dropdown.value, '');
+    expect([for (final item in dropdown.items!) item.value], ['', 'u', 'gone']);
+  });
+
+  testWidgets('test_view_partner_wait_minutes_field', (tester) async {
+    final c = await _show(tester, (_) async => _bundle([]));
+    await tester.enterText(
+        find.byKey(const ValueKey('partner_wait_minutes')), '45');
+    await _frames(tester);
+    expect(c.draft.partnerWaitMinutes, 45);
+  });
+
+  testWidgets('test_view_partner_setting_error_label', (tester) async {
+    // 写法同 test_view_save_in_flight_and_settings_errors：先改一项，再保存，后端报设置项的错误。
+    // 存着的搭档已不是实例，等待分钟改成了 0：两条都显示在序列设置下，前面加设置名
+    await _show(
+      tester,
+      (_) async => _bundle([], settings: {'partner': 'gone'}),
+      put: (_, __) async => [
+        {'index': -1, 'field': 'partner', 'message': '没有这个实例'},
+        {'index': -1, 'field': 'partner_wait_minutes', 'message': '取值不合法'},
+      ],
+    );
+    await tester.enterText(_field('partner_wait_minutes'), '0');
+    await _frames(tester);
+    await tester.tap(find.text('保存'));
+    await _frames(tester);
+    expect(find.text('搭档：没有这个实例'), findsOneWidget);
+    expect(find.text('等搭档最多：取值不合法'), findsOneWidget);
   });
 
   testWidgets('test_view_rejected_command_tells_user', (tester) async {
